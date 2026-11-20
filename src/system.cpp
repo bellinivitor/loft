@@ -237,7 +237,7 @@ bool installUnits(const Paths &paths, const Config &config, QString *error) {
         anyChanged = anyChanged || changed;
     }
 
-    // 0.1.0 watched parked folders only, under another name.
+    // Development builds watched parked folders only, under another name.
     if (QFileInfo::exists(paths.units + "/loft-parked.path")) {
         systemctl({"disable", "--now", "loft-parked.path"});
         QFile::remove(paths.units + "/loft-parked.path");
