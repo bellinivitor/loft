@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "loft.panel",
+  "name": "Loft",
+  "version": "0.2.0",
+  "author": "Loft",
+  "license": "MIT",
+  "description": "Start, restart and stop Loft's nginx, pick the terminal's PHP, and open your local sites from the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Loft",
+    "description": "Local PHP and Node sites: nginx controls, the terminal's PHP, and your sites.",
+    "category": "Development",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

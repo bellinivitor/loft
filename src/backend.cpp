@@ -69,7 +69,8 @@ QString Backend::lastLine(const QString &text) {
 void Backend::watch() {
     const Paths &paths = m_loft.paths();
     QDir().mkpath(paths.config);
-    QStringList wanted{paths.config, paths.configFile(), paths.data + "/php", paths.data + "/node"};
+    QStringList wanted{paths.config, paths.configFile(), paths.data + "/php", paths.data + "/node",
+                       paths.nginxOverrides()};
     for (const QString &parked : m_loft.config().parked)
         wanted << parked;
     const QStringList current = m_watcher.files() + m_watcher.directories();
@@ -92,6 +93,9 @@ void Backend::reloadState() {
             {"phpVersion", site.phpVersion}, {"nodeVersion", node}, {"missing", site.missing},
             {"phpInstalled", php.contains(site.phpVersion)},
             {"parkedIn", site.source == "parked" ? tilde(QFileInfo(site.path).absolutePath()) : QString()},
+            {"customNginx", site.customNginx},
+            {"nginxFile", tilde(site.customNginx ? m_loft.paths().nginxOverride(site.host)
+                                                 : m_loft.paths().nginx() + "/sites/" + site.host + ".conf")},
         });
     }
     watch();
@@ -174,6 +178,7 @@ QVariantList Backend::runtimeRows(const QString &tool) const {
             {"sites", uses.value(line)},
             {"update", !version.isEmpty() && latest.contains(line) && compareVersions(latest[line], version) > 0},
             {"busy", m_jobs.contains(key)},
+            {"path", php ? m_loft.paths().phpDir(line) : m_loft.paths().nodeDir(line) + "/bin"},
             {"progress", m_jobs.value(key).toMap().value("progress", -1)},
         });
     }
@@ -400,3 +405,19 @@ void Backend::openPhpIni(const QString &line) {
 }
 
 void Backend::copy(const QString &text) { QGuiApplication::clipboard()->setText(text); }
+
+// The editor opens on its own; saving reloads nginx through the watch on
+// ~/.config/loft/nginx, and this window follows through its config watch.
+void Backend::editNginx(const QString &name) {
+    QProcess::startDetached(QCoreApplication::applicationFilePath(), {"nginx:edit", name, "--no-wait"});
+    QTimer::singleShot(800, this, &Backend::refresh);
+}
+
+void Backend::resetNginx(const QString &name) { command({"nginx:reset", name}); }
+
+void Backend::activate(const QString &page) {
+    emit activated(page);
+    // Hyprland doesn't let a window focus itself; ask it to.
+    QProcess::startDetached("hyprctl", {"dispatch", "focuswindow",
+                                        QString("pid:%1").arg(QCoreApplication::applicationPid())});
+}

@@ -9,6 +9,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QThread>
 #include <unistd.h>
 
 namespace {
@@ -20,6 +21,7 @@ const char *Interface = "loft0";
 const char *DummyAddress = "10.254.254.53/32";
 const char *ShellMarker = "# Loft: PHP, Composer and Node on PATH";
 const char *SysctlFile = "/etc/sysctl.d/60-loft.conf";
+const char *BarWidget = "loft.panel";
 
 QString readText(const QString &path) {
     QFile file(path);
@@ -204,20 +206,21 @@ QMap<QString, QString> unitFiles(const Paths &paths, const Config &config, const
 
     units.insert("loft-refresh.service", QStringList{
         "[Unit]",
-        "Description=Loft: pick up folders added to parked directories",
+        "Description=Loft: pick up new parked folders and edited nginx configs",
         "",
         "[Service]",
         "Type=oneshot",
-        "ExecStart=" + loft + " refresh",
+        "ExecStart=" + loft + " refresh --notify",
         ""}.join('\n'));
 
-    if (!config.parked.isEmpty()) {
-        QStringList lines{"[Unit]", "Description=Loft: watch parked directories", "", "[Path]"};
-        for (const QString &parked : config.parked)
-            lines << "PathChanged=" + parked;
-        lines << "Unit=loft-refresh.service" << "" << "[Install]" << "WantedBy=default.target" << "";
-        units.insert("loft-parked.path", lines.join('\n'));
-    }
+    // Folders appearing in a parked directory, and your own nginx configs
+    // being saved, both regenerate and reload.
+    QStringList lines{"[Unit]", "Description=Loft: watch parked folders and your nginx configs", "", "[Path]"};
+    for (const QString &parked : config.parked)
+        lines << "PathChanged=" + parked;
+    lines << "PathChanged=" + paths.nginxOverrides();
+    lines << "Unit=loft-refresh.service" << "" << "[Install]" << "WantedBy=default.target" << "";
+    units.insert("loft-watch.path", lines.join('\n'));
     return units;
 }
 
@@ -234,28 +237,29 @@ bool installUnits(const Paths &paths, const Config &config, QString *error) {
         anyChanged = anyChanged || changed;
     }
 
-    const bool hadPath = QFileInfo::exists(paths.units + "/loft-parked.path");
-    if (!units.contains("loft-parked.path") && hadPath) {
+    // 0.1.0 watched parked folders only, under another name.
+    if (QFileInfo::exists(paths.units + "/loft-parked.path")) {
         systemctl({"disable", "--now", "loft-parked.path"});
         QFile::remove(paths.units + "/loft-parked.path");
         anyChanged = true;
     }
     if (anyChanged)
         systemctl({"daemon-reload"});
-    if (units.contains("loft-parked.path")) {
-        // A changed list of folders only takes effect when the path unit restarts.
-        if (anyChanged || !unitActive("loft-parked.path"))
-            systemctl({"enable", "loft-parked.path"}), systemctl({"restart", "loft-parked.path"});
+    QDir().mkpath(paths.nginxOverrides());
+    // A changed list of folders only takes effect when the path unit restarts.
+    if (anyChanged || !unitActive("loft-watch.path")) {
+        systemctl({"enable", "loft-watch.path"});
+        systemctl({"restart", "loft-watch.path"});
     }
     return true;
 }
 
 void removeUnits(const Paths &paths) {
-    QStringList units{"loft-nginx.service", "loft-dns.service", "loft-updates.timer", "loft-parked.path"};
+    QStringList units{"loft-nginx.service", "loft-dns.service", "loft-updates.timer", "loft-watch.path"};
     for (const QString &version : enabledPhpVersions(paths))
         units << "loft-php@" + version + ".service";
     systemctl(QStringList{"disable", "--now"} + units);
-    for (const QString &file : unitFiles(paths, Config(), QString()).keys() + QStringList{"loft-parked.path"})
+    for (const QString &file : unitFiles(paths, Config(), QString()).keys())
         QFile::remove(paths.units + "/" + file);
     systemctl({"daemon-reload"});
 }
@@ -457,6 +461,74 @@ void unconfigureShell(const Paths &paths) {
     writeIfChanged(bashrc, lines.join('\n').toUtf8());
     QFile::remove(snippetFile(paths));
     QFile::remove(uwsmEnvFile(paths));
+}
+
+QString barPluginSource() {
+    const QString installed = "/usr/share/loft/omarchy-plugin";
+    if (QFileInfo::exists(installed + "/manifest.json"))
+        return installed;
+    // A development build runs from build/ beside the source.
+    const QString source = QDir(QCoreApplication::applicationDirPath() + "/../omarchy-plugin").canonicalPath();
+    return QFileInfo::exists(source + "/manifest.json") ? source : QString();
+}
+
+static QString barPluginLink(const Paths &paths) { return paths.home + "/.config/omarchy/plugins/" + BarWidget; }
+static QString shellConfig(const Paths &paths) { return paths.home + "/.config/omarchy/shell.json"; }
+
+bool barWidgetInstalled(const Paths &paths) {
+    return QFileInfo::exists(barPluginLink(paths) + "/manifest.json")
+        && readText(shellConfig(paths)).contains(QString("\"%1\"").arg(BarWidget));
+}
+
+bool installBarWidget(const Paths &paths, QString *error) {
+    const QString source = barPluginSource();
+    if (source.isEmpty()) {
+        if (error)
+            *error = tr("The bar widget isn't installed with Loft");
+        return false;
+    }
+    const QString link = barPluginLink(paths);
+    QDir().mkpath(QFileInfo(link).absolutePath());
+    // The plugin stays in the package, linked from here, so updates reach
+    // the bar with the next shell restart.
+    if (QFileInfo(link).symLinkTarget() != source) {
+        QFile::remove(link);
+        if (!QFile::link(source, link)) {
+            if (error)
+                *error = tr("Can't write %1").arg(link);
+            return false;
+        }
+    }
+    if (readText(shellConfig(paths)).contains(QString("\"%1\"").arg(BarWidget)))
+        return true;
+    // The shell only knows a plugin after scanning for it; until then
+    // omarchy refuses to place it.
+    run("omarchy-shell", {"shell", "rescanPlugins"}, nullptr, 10000);
+    QString output;
+    int code = -1;
+    for (int attempt = 0; attempt < 20 && code != 0; ++attempt) {
+        if (attempt > 0)
+            QThread::msleep(250);
+        code = run("omarchy", {"plugin", "enable", BarWidget, "--before", "omarchy.tailscale"}, &output);
+        if (code != 0 && !output.contains("not a known"))
+            code = run("omarchy", {"plugin", "enable", BarWidget, "--section", "right", "--index", "0"}, &output);
+    }
+    if (code != 0 && error)
+        *error = output.trimmed();
+    return code == 0;
+}
+
+void removeBarWidget(const Paths &paths) {
+    if (readText(shellConfig(paths)).contains(QString("\"%1\"").arg(BarWidget)))
+        run("omarchy", {"plugin", "disable", BarWidget});
+    QFile::remove(barPluginLink(paths));
+}
+
+void openInEditor(const QString &file) {
+    if (!which("omarchy-launch-editor").isEmpty())
+        QProcess::startDetached("omarchy-launch-editor", {file});
+    else
+        QProcess::startDetached("xdg-open", {file});
 }
 
 int unprivilegedPortStart() {

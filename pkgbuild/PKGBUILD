@@ -1,5 +1,5 @@
 pkgname=loft
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Local PHP and Node sites at name.test with HTTPS, served by nginx (a Herd for Omarchy)'
 arch=('x86_64' 'aarch64')
@@ -22,4 +22,8 @@ package() {
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "$startdir/loft.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/loft.svg"
   install -Dm644 "$startdir/loft.desktop" "$pkgdir/usr/share/applications/loft.desktop"
+  # The Omarchy bar widget; loft setup links it into ~/.config/omarchy/plugins.
+  install -Dm644 omarchy-plugin/manifest.json "$pkgdir/usr/share/loft/omarchy-plugin/manifest.json"
+  install -Dm644 omarchy-plugin/Panel.qml "$pkgdir/usr/share/loft/omarchy-plugin/Panel.qml"
+  install -Dm644 -t "$pkgdir/usr/share/loft/omarchy-plugin/i18n" omarchy-plugin/i18n/*.json
 }

@@ -39,6 +39,28 @@ The only root steps are done once by `loft setup` through `pkexec`: trusting the
 CA system-wide and letting your user bind ports 80 and 443
 (`net.ipv4.ip_unprivileged_port_start=80`).
 
+## In the Omarchy bar
+
+`loft setup` puts Loft in the bar's right section. The icon dims when nginx is
+stopped; a click opens a panel with:
+
+- **Start / Restart / Stop** for nginx (with DNS and PHP-FPM).
+- **Terminal PHP**: one button per installed version, and the folder with the
+  default `php` binary.
+- **Sites**: click one to open it, the pencil edits its nginx config.
+- **All sites / PHP versions** open the window on that page (a right click on
+  the icon does the first).
+
+## Your own nginx config
+
+`loft nginx:edit` (or Edit beside a site's nginx config in the window, or the
+pencil in the bar) copies the site's generated config to
+`~/.config/loft/nginx/<site>.test.conf` and opens it in your editor. Loft serves
+that file from then on and reloads nginx every time you save. If it has a
+mistake, that one site falls back to Loft's config and a notification says
+what's wrong; the rest keep working. HTTPS and PHP changes made in Loft don't
+touch your file; `loft nginx:reset` goes back to Loft's.
+
 ## Install
 
 ```sh
@@ -72,6 +94,9 @@ Open a new terminal afterwards so `php`, `composer` and `node` are Loft's.
 | `loft which-php`, `loft which-node` | The binary this folder uses |
 | `loft check-updates` | Look for new releases now |
 | `loft open [name]` | Open a site in the browser |
+| `loft nginx:edit [name]` / `loft nginx:reset [name]` | Edit a site's nginx config (reloads on save), or go back to Loft's |
+| `loft app [sites\|php\|node\|settings]` | Open the window on a page |
+| `loft status` | What's running, PHP versions and sites (`--json` for the bar) |
 | `loft doctor` | Check every piece (`--json` for scripts) |
 | `loft start`, `loft stop`, `loft restart` | Control nginx, DNS and PHP |
 | `loft set check-updates on\|off`, `loft set php-build bulk\|common` | Settings |
@@ -103,9 +128,11 @@ Each PHP version's `php.ini` is yours to edit in `~/.config/loft/php/<version>/`
 | --- | --- |
 | `~/.config/loft/config.json` | Sites, parked folders, defaults |
 | `~/.config/loft/php/<version>/php.ini` | Your PHP settings |
+| `~/.config/loft/nginx/<site>.conf` | Your own nginx config for a site, when you made one |
 | `~/.local/share/loft/` | PHP, Node, shims, nginx config, certificates |
 | `~/.local/state/loft/logs/` | nginx and PHP-FPM logs |
 | `~/.config/systemd/user/loft-*` | The services |
+| `/usr/share/loft/omarchy-plugin/` | The bar widget, linked from `~/.config/omarchy/plugins/loft.panel` |
 
 ## Development
 

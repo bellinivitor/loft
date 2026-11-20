@@ -1,0 +1,19 @@
+{
+  "running": "nginx running",
+  "stopped": "nginx stopped",
+  "notSetUp": "Loft isn't set up. Run: loft setup",
+  "sites": { "one": "%1 site", "other": "%1 sites" },
+  "start": "Start",
+  "restart": "Restart",
+  "stop": "Stop",
+  "terminalPhp": "Terminal PHP",
+  "noPhp": "No PHP installed yet",
+  "binFolder": "Open the folder with php %1",
+  "sitesHeader": "Sites",
+  "noSites": "No sites yet. In a project folder: loft link",
+  "more": { "one": "and %1 more", "other": "and %1 more" },
+  "editNginx": "Edit nginx config",
+  "customNginx": "Your own nginx config",
+  "openSites": "All sites",
+  "openPhp": "PHP versions"
+}

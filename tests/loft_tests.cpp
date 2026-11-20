@@ -522,6 +522,49 @@ private slots:
         QCOMPARE(read(dir.path() + "/.bashrc"), QString::fromUtf8(original));
     }
 
+    void customNginxConfig() {
+        QTemporaryDir dir;
+        const Paths paths = Paths::forHome(dir.path());
+        write(dir.path() + "/Work/shop/index.html", "");
+        Loft loft(paths, false);
+        QVERIFY(loft.link(dir.path() + "/Work/shop", {}, false, {}).ok);
+        const QString served = paths.nginx() + "/sites/shop.test.conf";
+
+        QString file;
+        Result result = loft.nginxEdit("shop", &file);
+        QVERIFY2(result.ok, qPrintable(result.message));
+        QCOMPARE(file, paths.nginxOverride("shop.test"));
+        QVERIFY(read(file).contains("server_name shop.test *.shop.test;"));
+        QVERIFY(loft.sites().first().customNginx);
+
+        // Your file is what nginx gets, and Loft's changes leave it alone.
+        write(file, "server { listen 127.0.0.1:80; server_name shop.test; return 418; }\n");
+        QVERIFY(loft.apply().ok);
+        QVERIFY(read(served).contains("return 418;"));
+        result = loft.isolate("shop", "node", {});
+        QVERIFY(read(served).contains("return 418;"));
+
+        QVERIFY(loft.nginxReset("shop").ok);
+        QVERIFY(!QFileInfo::exists(file));
+        QVERIFY(!read(served).contains("return 418;"));
+
+        // A broken file of yours falls back to Loft's config for that site
+        // instead of blocking every other change.
+        if (!System::which("nginx").isEmpty()) {
+            QVERIFY(loft.nginxEdit("shop", &file).ok);
+            write(file, "this isn't nginx\n");
+            result = loft.apply();
+            QVERIFY(!result.ok);
+            QVERIFY2(result.message.contains(file), qPrintable(result.message));
+            QVERIFY(read(served).contains("server_name shop.test *.shop.test;"));
+            QVERIFY(loft.nginxReset("shop").ok);
+        }
+
+        QVERIFY(loft.nginxEdit("shop", &file).ok);
+        QVERIFY(loft.unlink("shop").ok);
+        QVERIFY(!QFileInfo::exists(file));
+    }
+
     void units() {
         Config config;
         config.parked = {"/home/u/Sites"};
@@ -529,9 +572,12 @@ private slots:
         QVERIFY(units.value("loft-nginx.service").contains("-p /home/u/.local/share/loft/nginx"));
         QVERIFY(units.value("loft-php@.service").contains("/home/u/.local/share/loft/php/%i/php-fpm -F -y"));
         QVERIFY(units.value("loft-dns.service").contains("ExecStart=/usr/bin/loft dns-server"));
-        QVERIFY(units.value("loft-parked.path").contains("PathChanged=/home/u/Sites"));
+        QVERIFY(units.value("loft-watch.path").contains("PathChanged=/home/u/Sites"));
+        QVERIFY(units.value("loft-watch.path").contains("PathChanged=/home/u/.config/loft/nginx"));
+        QVERIFY(units.value("loft-refresh.service").contains("refresh --notify"));
         config.parked.clear();
-        QVERIFY(!System::unitFiles(Paths::forHome("/home/u"), config, "/usr/bin/loft").contains("loft-parked.path"));
+        QVERIFY(!System::unitFiles(Paths::forHome("/home/u"), config, "/usr/bin/loft").value("loft-watch.path")
+                     .contains("/home/u/Sites"));
     }
 };
 

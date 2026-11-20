@@ -192,6 +192,13 @@ ScrollView {
                             onClicked: backend.makeDefault(page.tool, card.row.line)
                         }
                         LoftButton {
+                            visible: card.installed && !card.row.busy
+                            glyph: win.g.folder
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Open the binary's folder")
+                            onClicked: backend.openFolder(card.row.path)
+                        }
+                        LoftButton {
                             visible: page.php && card.installed && !card.row.busy
                             glyph: win.g.file
                             ToolTip.visible: hovered

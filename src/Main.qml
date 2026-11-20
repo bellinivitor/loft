@@ -44,7 +44,8 @@ ApplicationWindow {
         refresh: String.fromCodePoint(0xF0450), alert: String.fromCodePoint(0xF0026),
         check: String.fromCodePoint(0xF012C), cross: String.fromCodePoint(0xF0156),
         shield: String.fromCodePoint(0xF0565), wrench: String.fromCodePoint(0xF05B7),
-        plus: String.fromCodePoint(0xF0415)
+        plus: String.fromCodePoint(0xF0415), edit: String.fromCodePoint(0xF03EB),
+        cog: String.fromCodePoint(0xF08BB), binary: String.fromCodePoint(0xF0256)
     })
 
     readonly property var selected: {
@@ -108,6 +109,13 @@ ApplicationWindow {
     Connections {
         target: backend
         function onNotice(message, error) { toast.show(message, error) }
+        function onActivated(page) {
+            var index = ["sites", "php", "node", "settings"].indexOf(page)
+            if (index >= 0)
+                win.page = index
+            win.raise()
+            win.requestActivate()
+        }
         function onFolderPicked(purpose, path) {
             if (purpose === "park")
                 backend.park(path)

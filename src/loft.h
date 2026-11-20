@@ -64,6 +64,11 @@ public:
     Result uninstallRuntime(const QString &tool, const QString &line);
     Result restartPhp(const QString &minor);
 
+    // Copies the site's generated nginx config to ~/.config/loft/nginx the
+    // first time, so it can be edited; Loft serves that file from then on.
+    Result nginxEdit(const QString &name, QString *file);
+    Result nginxReset(const QString &name);
+
     // Writes nginx, PHP-FPM, shims and units, then starts, reloads or stops
     // services to match.
     Result apply();

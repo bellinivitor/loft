@@ -28,6 +28,7 @@ QTextStream out(stdout);
 QTextStream err(stderr);
 
 QString tr(const char *text) { return QCoreApplication::translate("loft", text); }
+QString tr(const char *text, int n) { return QCoreApplication::translate("loft", text, nullptr, n); }
 
 int fail(const QString &message) {
     err << "loft: " << message.trimmed() << Qt::endl;
@@ -108,6 +109,8 @@ void usage() {
         << "  proxy <name> <url> [--secure]          " << tr("Serve name.test from another server") << "\n"
         << "  unproxy <name>                         " << tr("Remove a proxy") << "\n"
         << "  open [name]                            " << tr("Open a site in the browser") << "\n"
+        << "  nginx:edit [name]                      " << tr("Edit a site's nginx config (reloads on save)") << "\n"
+        << "  nginx:reset [name]                     " << tr("Back to Loft's nginx config") << "\n"
         << "\n" << tr("PHP and Node") << "\n"
         << "  use <8.4|node@24>                      " << tr("Set the default version (the terminal's too)") << "\n"
         << "  php:list, node:list [--json]           " << tr("Installed and available versions") << "\n"
@@ -120,6 +123,8 @@ void usage() {
         << "  update                                 " << tr("Install every update") << "\n"
         << "\n" << tr("Loft itself") << "\n"
         << "  (" << tr("no command") << ")                           " << tr("Open the window") << "\n"
+        << "  app [sites|php|node|settings]          " << tr("Open the window on a page") << "\n"
+        << "  status [--json]                        " << tr("What's running, the PHP versions and the sites") << "\n"
         << "  setup                                  " << tr("One-time setup (asks for your password once)") << "\n"
         << "  doctor [--json]                        " << tr("Check that everything works") << "\n"
         << "  start, stop, restart                   " << tr("Control nginx, DNS and PHP") << "\n"
@@ -388,6 +393,45 @@ int services(const Loft &loft, const QString &action) {
     return 0;
 }
 
+// A quick snapshot for the bar: no network and no DNS lookups.
+int status(const Loft &loft, const Arguments &arguments) {
+    const Config &config = loft.config();
+    QStringList units{"loft-nginx.service", "loft-dns.service"};
+    if (!config.php.isEmpty())
+        units << "loft-php@" + config.php + ".service";
+    const auto states = System::unitStates(units);
+
+    QJsonArray php, node, sites;
+    const auto installedPhp = loft.installedPhp();
+    for (auto it = installedPhp.begin(); it != installedPhp.end(); ++it)
+        php.append(QJsonObject{{"line", it.key()}, {"version", it.value()}, {"default", it.key() == config.php},
+                               {"path", loft.paths().phpDir(it.key())}});
+    const auto installedNode = loft.installedNode();
+    for (auto it = installedNode.begin(); it != installedNode.end(); ++it)
+        node.append(QJsonObject{{"line", it.key()}, {"version", it.value()}, {"default", it.key() == config.node},
+                                {"path", loft.paths().nodeDir(it.key())}});
+    for (const Site &site : loft.sites())
+        sites.append(QJsonObject{{"name", site.name}, {"host", site.host}, {"url", site.url()},
+                                 {"secure", site.secure}, {"kind", site.kind}, {"path", site.path},
+                                 {"phpVersion", site.usesPhp() ? site.phpVersion : QString()},
+                                 {"customNginx", site.customNginx}, {"missing", site.missing}});
+    const QJsonObject object{
+        {"nginx", states.value("loft-nginx.service")},
+        {"dns", states.value("loft-dns.service")},
+        {"fpm", config.php.isEmpty() ? QString() : states.value("loft-php@" + config.php + ".service")},
+        {"tld", config.tld}, {"php", php}, {"node", node}, {"sites", sites},
+    };
+    if (arguments.has("json")) {
+        printJson(object);
+        return 0;
+    }
+    out << "nginx " << object["nginx"].toString() << " · DNS " << object["dns"].toString();
+    if (!config.php.isEmpty())
+        out << " · PHP " << installedPhp.value(config.php, config.php) << " " << object["fpm"].toString();
+    out << "\n" << tr("%n site(s)", int(sites.size())) << Qt::endl;
+    return 0;
+}
+
 int runDns(const Loft &loft) {
     DnsServer server(loft.config().tld, System::ipv6Loopback());
     QString error;
@@ -427,7 +471,7 @@ int runCli(const QStringList &all) {
 
     static const QStringList mutating{"setup", "uninstall", "refresh", "apply", "link", "unlink", "park",
                                       "forget", "secure", "unsecure", "isolate", "unisolate", "proxy", "unproxy",
-                                      "use", "php:uninstall", "node:uninstall", "set"};
+                                      "use", "php:uninstall", "node:uninstall", "set", "nginx:reset"};
     std::unique_ptr<QLockFile> lock;
     if (mutating.contains(command) && !lockAndReload(loft, lock))
         return fail(tr("Another loft command is still running"));
@@ -443,10 +487,44 @@ int runCli(const QStringList &all) {
         });
         return report(result);
     }
-    if (command == "doctor" || command == "status")
+    if (command == "doctor")
         return doctor(loft, arguments);
-    if (command == "refresh" || command == "apply")
-        return report(loft.apply());
+    if (command == "status")
+        return status(loft, arguments);
+    if (command == "refresh" || command == "apply") {
+        const Result result = loft.apply();
+        // Run by systemd when a parked folder or your nginx config changes,
+        // where nobody reads the output: say so on the desktop instead.
+        if (!result.ok && arguments.has("notify"))
+            System::notify(tr("Loft couldn't apply a change"), result.message.left(400));
+        return report(result);
+    }
+    if (command == "nginx:edit") {
+        QString file;
+        const Result result = loft.nginxEdit(first, &file);
+        if (!result.ok)
+            return fail(result.message);
+        // In a terminal the editor runs right here and Loft applies the file
+        // when it closes; from the window or the bar the editor opens on its
+        // own and the watch on ~/.config/loft/nginx reloads on save.
+        const QString editor = qEnvironmentVariable("VISUAL", qEnvironmentVariable("EDITOR"));
+        if (!arguments.has("no-wait") && isatty(STDIN_FILENO) && !editor.isEmpty()) {
+            QProcess process;
+            process.setProcessChannelMode(QProcess::ForwardedChannels);
+            process.setInputChannelMode(QProcess::ForwardedInputChannel);
+            process.start("/bin/sh", {"-c", editor + " \"$1\"", "sh", file});
+            process.waitForFinished(-1);
+            std::unique_ptr<QLockFile> lock;
+            if (!lockAndReload(loft, lock))
+                return fail(tr("Another loft command is still running"));
+            return report(loft.apply());
+        }
+        System::openInEditor(file);
+        out << file << Qt::endl;
+        return 0;
+    }
+    if (command == "nginx:reset")
+        return report(loft.nginxReset(first));
     if (command == "start" || command == "stop" || command == "restart")
         return services(loft, command);
 

@@ -32,6 +32,9 @@ struct Paths {
     QString downloads() const { return data + "/downloads"; }
     QString composer() const { return data + "/composer.phar"; }
     QString phpSocket(const QString &minor) const { return run() + "/php-" + minor + ".sock"; }
+    // Your own nginx config for a site, used instead of the generated one.
+    QString nginxOverrides() const { return config + "/nginx"; }
+    QString nginxOverride(const QString &host) const { return nginxOverrides() + "/" + host + ".conf"; }
     // The table the php and node shims read to pick a version by directory.
     QString versionsFile() const { return data + "/versions.tsv"; }
     QString updatesFile() const { return state + "/updates.json"; }
@@ -76,6 +79,7 @@ struct Site {
     QString phpVersion; // the PHP minor that serves it: isolated or the default
     bool secure = false;
     bool missing = false; // a linked folder that is gone
+    bool customNginx = false; // served from your own config in ~/.config/loft/nginx
 
     QString url() const { return QString(secure ? "https://" : "http://") + host; }
     bool usesPhp() const { return kind == "laravel" || kind == "php"; }

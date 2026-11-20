@@ -56,6 +56,16 @@ bool shellConfigured(const Paths &paths);
 bool configureShell(const Paths &paths, QString *error);
 void unconfigureShell(const Paths &paths);
 
+// The Omarchy bar widget: a link to the packaged plugin in
+// ~/.config/omarchy/plugins, placed in the bar's right section.
+QString barPluginSource();
+bool barWidgetInstalled(const Paths &paths);
+bool installBarWidget(const Paths &paths, QString *error);
+void removeBarWidget(const Paths &paths);
+
+// Opens a file in the desktop's editor (Omarchy's default when there is one).
+void openInEditor(const QString &file);
+
 int unprivilegedPortStart();
 bool ipv6Loopback();
 

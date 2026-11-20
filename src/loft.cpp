@@ -123,7 +123,12 @@ Loft::Loft(const Paths &paths, bool manageServices) : m_paths(paths), m_services
 
 void Loft::reload() { m_config = Config::load(m_paths.configFile()); }
 
-QList<Site> Loft::sites() const { return resolveSites(m_config); }
+QList<Site> Loft::sites() const {
+    QList<Site> all = resolveSites(m_config);
+    for (Site &site : all)
+        site.customNginx = QFileInfo::exists(m_paths.nginxOverride(site.host));
+    return all;
+}
 
 std::optional<Site> Loft::site(const QString &name) const {
     for (const Site &site : sites())
@@ -205,6 +210,7 @@ Result Loft::unlink(const QString &name) {
     m_config.links.remove(name);
     m_config.sites.remove(name);
     Certs::removeSite(m_paths, name + "." + m_config.tld);
+    QFile::remove(m_paths.nginxOverride(name + "." + m_config.tld));
     return commit(tr("Unlinked %1").arg(name + "." + m_config.tld));
 }
 
@@ -235,8 +241,12 @@ Result Loft::secure(const QString &name, bool on) {
     m_config.sites[found->name].secure = on;
     if (!on)
         Certs::removeSite(m_paths, found->host);
-    return commit(on ? tr("%1 is now served over HTTPS").arg("https://" + found->host)
-                     : tr("%1 is back to plain HTTP").arg("http://" + found->host));
+    Result result = commit(on ? tr("%1 is now served over HTTPS").arg("https://" + found->host)
+                              : tr("%1 is back to plain HTTP").arg("http://" + found->host));
+    if (result.ok && found->customNginx)
+        result.message += "\n" + tr("Its nginx config is your own, so this only takes effect after: loft nginx:reset %1")
+                                      .arg(found->name);
+    return result;
 }
 
 Result Loft::isolate(const QString &name, const QString &tool, const QString &version) {
@@ -255,9 +265,13 @@ Result Loft::isolate(const QString &name, const QString &tool, const QString &ve
     SiteSettings &settings = m_config.sites[found->name];
     (tool == "php" ? settings.php : settings.node) = line;
     const QString fallback = tool == "php" ? m_config.php : m_config.node;
-    return commit(line.isEmpty()
-                      ? tr("%1 follows the default %2 again (%3)").arg(found->host, label, fallback)
-                      : tr("%1 now uses %2 %3").arg(found->host, label, line));
+    Result result = commit(line.isEmpty()
+                               ? tr("%1 follows the default %2 again (%3)").arg(found->host, label, fallback)
+                               : tr("%1 now uses %2 %3").arg(found->host, label, line));
+    if (result.ok && tool == "php" && found->customNginx)
+        result.message += "\n" + tr("Its nginx config is your own, so this only takes effect after: loft nginx:reset %1")
+                                      .arg(found->name);
+    return result;
 }
 
 Result Loft::useDefault(const QString &tool, const QString &version) {
@@ -297,6 +311,7 @@ Result Loft::unproxy(const QString &name) {
         return Result::fail(tr("There's no proxy called %1").arg(name));
     m_config.sites.remove(name);
     Certs::removeSite(m_paths, name + "." + m_config.tld);
+    QFile::remove(m_paths.nginxOverride(name + "." + m_config.tld));
     return commit(tr("Removed the proxy %1").arg(name + "." + m_config.tld));
 }
 
@@ -359,11 +374,43 @@ Result Loft::restartPhp(const QString &minor) {
     return Result::done(tr("Restarted PHP %1").arg(minor));
 }
 
+Result Loft::nginxEdit(const QString &name, QString *file) {
+    QString error;
+    const auto found = target(name, &error);
+    if (!found)
+        return Result::fail(error);
+    const QString path = m_paths.nginxOverride(found->host);
+    if (file)
+        *file = path;
+    if (QFileInfo::exists(path))
+        return Result::done(path);
+    const QString header = QStringList{
+        "# " + tr("Your nginx config for %1. Loft serves this file instead of its own,").arg(found->host),
+        "# " + tr("reloading nginx each time you save. Back to Loft's: loft nginx:reset %1").arg(found->name),
+        "", ""}.join('\n');
+    Site site = *found;
+    if (site.secure && !Certs::ensureSite(m_paths, site.host, &error))
+        site.secure = false;
+    if (!System::writeIfChanged(path, (header + nginxSiteConfig(site, m_paths, System::ipv6Loopback())).toUtf8()))
+        return Result::fail(tr("Can't write %1").arg(path));
+    return Result::done(path);
+}
+
+Result Loft::nginxReset(const QString &name) {
+    QString error;
+    const auto found = target(name, &error);
+    if (!found)
+        return Result::fail(error);
+    if (!QFile::remove(m_paths.nginxOverride(found->host)))
+        return Result::done(tr("%1 already uses Loft's nginx config").arg(found->host));
+    return commit(tr("%1 is back on Loft's nginx config").arg(found->host));
+}
+
 Result Loft::apply() {
     QStringList problems;
     const Paths &p = m_paths;
     for (const QString &directory : {p.data, p.run(), p.logs(), p.nginx() + "/sites", p.nginx() + "/temp",
-                                     p.nginx() + "/default", p.bin(), p.certs(), p.npmGlobal()})
+                                     p.nginx() + "/default", p.bin(), p.certs(), p.npmGlobal(), p.nginxOverrides()})
         QDir().mkpath(directory);
 
     const bool ipv6 = System::ipv6Loopback();
@@ -397,8 +444,11 @@ Result Loft::apply() {
                                    .arg(site.host, site.phpVersion));
         const QString file = site.host + ".conf";
         wanted << file;
-        System::writeIfChanged(p.nginx() + "/sites/" + file, nginxSiteConfig(site, p, ipv6).toUtf8(), false,
-                               &changed);
+        QByteArray content = nginxSiteConfig(site, p, ipv6).toUtf8();
+        QFile custom(p.nginxOverride(site.host));
+        if (custom.open(QIODevice::ReadOnly))
+            content = custom.readAll();
+        System::writeIfChanged(p.nginx() + "/sites/" + file, content, false, &changed);
         nginxChanged = nginxChanged || changed;
     }
     for (const QString &file : QDir(p.nginx() + "/sites").entryList({"*.conf"}, QDir::Files))
@@ -415,6 +465,35 @@ Result Loft::apply() {
     }
     System::writeIfChanged(p.versionsFile(), versionsTable(m_config, all).toUtf8());
     System::installShims(p, php.keys());
+
+    // Validate before anything reloads. Without nginx (tests on a machine
+    // that lacks it) there's nothing to check against.
+    bool nginxValid = true;
+    QString nginxOutput;
+    if (!System::which("nginx").isEmpty()) {
+        const QStringList test{"-t", "-q", "-e", "stderr", "-p", p.nginx(), "-c", p.nginx() + "/nginx.conf"};
+        int code = System::run(System::nginxExecutable(), test, &nginxOutput);
+        // A mistake in one of your own site configs shouldn't hold every
+        // other site back: serve Loft's config for that site until it's fixed.
+        QSet<QString> fallen;
+        while (code != 0) {
+            const Site *culprit = nullptr;
+            for (const Site &site : all)
+                if (site.customNginx && !fallen.contains(site.host)
+                    && nginxOutput.contains("/sites/" + site.host + ".conf"))
+                    culprit = &site;
+            if (!culprit)
+                break;
+            fallen << culprit->host;
+            problems << tr("Your nginx config for %1 has an error, so Loft serves its own until you fix %2: %3")
+                            .arg(culprit->host, p.nginxOverride(culprit->host), nginxOutput.trimmed());
+            System::writeIfChanged(p.nginx() + "/sites/" + culprit->host + ".conf",
+                                   nginxSiteConfig(*culprit, p, ipv6).toUtf8());
+            nginxChanged = true;
+            code = System::run(System::nginxExecutable(), test, &nginxOutput);
+        }
+        nginxValid = code == 0;
+    }
 
     if (!m_services)
         return problems.isEmpty() ? Result::done() : Result::fail(problems.join('\n'));
@@ -458,10 +537,8 @@ Result Loft::apply() {
     if (System::which("nginx").isEmpty()) {
         problems << tr("nginx isn't installed: sudo pacman -S nginx");
     } else {
-        QString output;
-        const QStringList test{"-t", "-q", "-e", "stderr", "-p", p.nginx(), "-c", p.nginx() + "/nginx.conf"};
-        if (System::run(System::nginxExecutable(), test, &output) != 0) {
-            problems << tr("nginx rejected the configuration: %1").arg(output.trimmed());
+        if (!nginxValid) {
+            problems << tr("nginx rejected the configuration: %1").arg(nginxOutput.trimmed());
         } else if (!active("loft-nginx.service")) {
             System::systemctl({"enable", "loft-nginx.service"});
             if (System::systemctl({"restart", "loft-nginx.service"}) != 0)
@@ -543,6 +620,12 @@ QList<Check> Loft::doctor() const {
                    nodeOk ? tr("Node %1").arg(node.value(m_config.node)) : tr("Install one: loft node:install 24"),
                    false});
 
+    if (QFileInfo(m_paths.home + "/.config/omarchy").isDir()) {
+        const bool bar = System::barWidgetInstalled(m_paths);
+        checks.append({"bar", tr("Loft is in the Omarchy bar"), bar,
+                       bar ? tr("Start, stop and switch PHP from the top bar") : tr("Setup adds it"), true});
+    }
+
     const bool composer = QFileInfo::exists(m_paths.composer());
     checks.append({"composer", tr("Composer is installed"), composer,
                    composer ? m_paths.composer() : tr("Setup downloads it"), true});
@@ -586,6 +669,12 @@ Result Loft::setup(bool askRoot, const Step &step) {
     report(tr("php, composer and node in your terminal"), shell,
            shell ? tr("Open a new terminal to use them") : error);
 
+    if (QFileInfo(m_paths.home + "/.config/omarchy").isDir()) {
+        error.clear();
+        const bool bar = System::installBarWidget(m_paths, &error);
+        report(tr("Loft in the Omarchy bar"), bar, error);
+    }
+
     if (!QFileInfo::exists(m_paths.composer())) {
         error.clear();
         const bool composer = Runtimes::installComposer(m_paths, &error);
@@ -608,6 +697,8 @@ Result Loft::uninstall(bool purge, const Step &step) {
     report(tr("Removed the .%1 DNS route").arg(m_config.tld), true, {});
     System::unconfigureShell(m_paths);
     report(tr("Removed Loft from ~/.bashrc"), true, {});
+    System::removeBarWidget(m_paths);
+    report(tr("Removed Loft from the Omarchy bar"), true, {});
     Certs::untrustInBrowsers(m_paths);
     report(tr("Removed the CA from Chromium and Firefox"), true, {});
     if (Certs::trustedBySystem(m_paths) || QFileInfo::exists("/etc/sysctl.d/60-loft.conf")) {

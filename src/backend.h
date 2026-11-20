@@ -81,6 +81,11 @@ public:
     Q_INVOKABLE void openFolder(const QString &path);
     Q_INVOKABLE void openPhpIni(const QString &line);
     Q_INVOKABLE void copy(const QString &text);
+    Q_INVOKABLE void editNginx(const QString &name);
+    Q_INVOKABLE void resetNginx(const QString &name);
+
+    // Brings the window forward on a page ("sites", "php", "node", "settings").
+    void activate(const QString &page);
 
 signals:
     void changed();
@@ -89,6 +94,7 @@ signals:
     void jobsChanged();
     void notice(const QString &message, bool error);
     void folderPicked(const QString &purpose, const QString &path);
+    void activated(const QString &page);
 
 private:
     void command(const QStringList &arguments, const QString &directory = {});

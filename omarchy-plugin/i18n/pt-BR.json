@@ -1,0 +1,19 @@
+{
+  "running": "nginx rodando",
+  "stopped": "nginx parado",
+  "notSetUp": "O Loft não está configurado. Rode: loft setup",
+  "sites": { "one": "%1 site", "other": "%1 sites" },
+  "start": "Iniciar",
+  "restart": "Reiniciar",
+  "stop": "Parar",
+  "terminalPhp": "PHP do terminal",
+  "noPhp": "Nenhum PHP instalado ainda",
+  "binFolder": "Abrir a pasta do php %1",
+  "sitesHeader": "Sites",
+  "noSites": "Nenhum site ainda. Na pasta do projeto: loft link",
+  "more": { "one": "e mais %1", "other": "e mais %1" },
+  "editNginx": "Editar a config do nginx",
+  "customNginx": "Config do nginx sua",
+  "openSites": "Todos os sites",
+  "openPhp": "Versões do PHP"
+}
