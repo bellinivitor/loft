@@ -61,6 +61,36 @@ mistake, that one site falls back to Loft's config and a notification says
 what's wrong; the rest keep working. HTTPS and PHP changes made in Loft don't
 touch your file; `loft nginx:reset` goes back to Loft's.
 
+## For AI agents (MCP)
+
+`loft mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdio, so Claude Code, Codex, OpenCode and other agents can do
+everything the window does:
+
+| Tools | |
+| --- | --- |
+| `get_status`, `list_sites`, `doctor` | What's running, every site, health |
+| `which_runtime` | The PHP and Node a project folder runs, and why |
+| `link_site`, `unlink_site`, `secure_site`, `isolate_site` | Sites, HTTPS, per-site versions |
+| `park_folder`, `forget_folder`, `add_proxy`, `remove_proxy` | Parked folders and proxies |
+| `list_versions`, `install_version`, `update_versions`, `uninstall_version`, `check_updates` | PHP and Node versions |
+| `set_default_version`, `restart_php`, `control_services` | Defaults and services |
+| `get_nginx_config`, `set_nginx_config`, `reset_nginx_config` | A site's nginx config (rejected configs roll back) |
+| `change_settings`, `open_site`, `run_setup` | The rest |
+
+Register it once per client:
+
+```sh
+claude mcp add --scope user loft -- loft mcp
+```
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.loft]
+command = "loft"
+args = ["mcp"]
+```
+
 ## Install
 
 ```sh
@@ -97,6 +127,7 @@ Open a new terminal afterwards so `php`, `composer` and `node` are Loft's.
 | `loft nginx:edit [name]` / `loft nginx:reset [name]` | Edit a site's nginx config (reloads on save), or go back to Loft's |
 | `loft app [sites\|php\|node\|settings]` | Open the window on a page |
 | `loft status` | What's running, PHP versions and sites (`--json` for the bar) |
+| `loft mcp` | The MCP server for AI agents, on stdio |
 | `loft doctor` | Check every piece (`--json` for scripts) |
 | `loft start`, `loft stop`, `loft restart` | Control nginx, DNS and PHP |
 | `loft set check-updates on\|off`, `loft set php-build bulk\|common` | Settings |

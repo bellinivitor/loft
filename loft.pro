@@ -11,6 +11,7 @@ HEADERS += \
     src/core.h \
     src/dnsserver.h \
     src/loft.h \
+    src/mcp.h \
     src/portal.h \
     src/runtimes.h \
     src/system.h \
@@ -25,6 +26,7 @@ SOURCES += \
     src/core.cpp \
     src/dnsserver.cpp \
     src/loft.cpp \
+    src/mcp.cpp \
     src/portal.cpp \
     src/runtimes.cpp \
     src/system.cpp \

@@ -1,5 +1,5 @@
 pkgname=loft
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='Local PHP and Node sites at name.test with HTTPS, served by nginx (a Herd for Omarchy)'
 arch=('x86_64' 'aarch64')

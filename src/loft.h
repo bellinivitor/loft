@@ -1,6 +1,10 @@
 #pragma once
 
 #include "core.h"
+#include "runtimes.h"
+
+#include <QLockFile>
+#include <memory>
 
 #include <QList>
 #include <QMap>
@@ -14,6 +18,15 @@ struct Result {
     QString message;
     static Result fail(const QString &message) { return {false, message}; }
     static Result done(const QString &message = {}) { return {true, message}; }
+};
+
+// The PHP and Node a folder runs, and why: a site's isolation, a project's
+// .nvmrc or .node-version (Node only, when that major is installed), or the
+// default. Mirrors what the php and node shims pick.
+struct RuntimeChoice {
+    QString site;                 // the site holding the folder, if any
+    QString php, phpVersion, phpBinary, phpFrom;     // phpFrom: "site" or "default"
+    QString node, nodeVersion, nodeBinary, nodeFrom; // nodeFrom: "site", ".nvmrc", ".node-version" or "default"
 };
 
 struct Check {
@@ -45,6 +58,21 @@ public:
 
     QMap<QString, QString> installedPhp() const;
     QMap<QString, QString> installedNode() const;
+    RuntimeChoice runtimeFor(const QString &directory) const;
+
+    // One change at a time across every loft process (the window, the bar
+    // and agents all run loft too), each starting from the config as the
+    // last one left it. Null when another holds it for too long.
+    std::unique_ptr<QLockFile> lock(int timeoutMs = 120000);
+
+    // The versions on offer, from the cache when it's under six hours old.
+    Catalog catalog(bool refresh, QString *error) const;
+    // Downloads, checks and installs the newest release of a line ("8.4",
+    // "24"), or does nothing when it's already installed and force is off.
+    // Locks for the final step itself, so call it unlocked.
+    Result install(const QString &tool, const QString &line, bool force,
+                   const std::function<void(const QString &label)> &starting = {},
+                   const Runtimes::Progress &progress = {});
 
     Result link(const QString &directory, QString name, bool secure, const QString &php);
     Result unlink(const QString &name);

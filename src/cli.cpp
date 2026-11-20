@@ -6,6 +6,7 @@
 #include "certs.h"
 #include "dnsserver.h"
 #include "loft.h"
+#include "mcp.h"
 #include "runtimes.h"
 #include "system.h"
 
@@ -54,17 +55,9 @@ QString tilde(const QString &path) {
     return path == home || path.startsWith(home + "/") ? "~" + path.mid(home.length()) : path;
 }
 
-// One change at a time across every loft process (the window runs commands
-// too, and parked folders trigger refreshes), each starting from the config
-// as the last one left it.
 bool lockAndReload(Loft &loft, std::unique_ptr<QLockFile> &lock) {
-    QDir().mkpath(loft.paths().state);
-    lock = std::make_unique<QLockFile>(loft.paths().state + "/lock");
-    lock->setStaleLockTime(0);
-    if (!lock->tryLock(120000))
-        return false;
-    loft.reload();
-    return true;
+    lock = loft.lock();
+    return lock != nullptr;
 }
 
 // Arguments split into positionals and --flags (with optional =values).
@@ -125,6 +118,7 @@ void usage() {
         << "  (" << tr("no command") << ")                           " << tr("Open the window") << "\n"
         << "  app [sites|php|node|settings]          " << tr("Open the window on a page") << "\n"
         << "  status [--json]                        " << tr("What's running, the PHP versions and the sites") << "\n"
+        << "  mcp                                    " << tr("Run the MCP server on stdio, for AI agents") << "\n"
         << "  setup                                  " << tr("One-time setup (asks for your password once)") << "\n"
         << "  doctor [--json]                        " << tr("Check that everything works") << "\n"
         << "  start, stop, restart                   " << tr("Control nginx, DNS and PHP") << "\n"
@@ -187,59 +181,21 @@ Runtimes::Progress progressPrinter(bool machine, const QString &label) {
     };
 }
 
-Catalog catalog(const Loft &loft, bool refresh, QString *error) {
-    Catalog cached = Runtimes::cachedCatalog(loft.paths());
-    if (!refresh && cached.fetched.isValid() && cached.fetched.secsTo(QDateTime::currentDateTimeUtc()) < 6 * 3600)
-        return cached;
-    Catalog fresh = Runtimes::fetchCatalog(loft.config().phpBuild, error);
-    if (fresh.php.isEmpty())
-        return cached;
-    Runtimes::saveCatalog(loft.paths(), fresh);
-    return fresh;
-}
+Catalog catalog(const Loft &loft, bool refresh, QString *error) { return loft.catalog(refresh, error); }
 
-int installRuntime(Loft &loft, const QString &tool, QString line, const Arguments &arguments) {
-    if (line.startsWith(tool + "@"))
-        line = line.mid(tool.length() + 1);
-    line = tool == "php" ? line.section('.', 0, 1) : line.section('.', 0, 0);
-    QString error;
-    const Catalog list = catalog(loft, true, &error);
+int installRuntime(Loft &loft, const QString &tool, const QString &line, const Arguments &arguments) {
     const bool machine = arguments.has("progress");
-    if (tool == "php") {
-        if (!list.php.contains(line))
-            return fail(error.isEmpty() ? tr("There's no PHP %1 build. Available: %2")
-                                              .arg(line, QStringList(list.php.keys()).join(", "))
-                                        : error);
-        const PhpRelease release = list.php.value(line);
-        if (loft.installedPhp().value(line) == release.version && !arguments.has("force"))
-            return report(Result::done(tr("PHP %1 is already the newest").arg(release.version)));
-        const QString label = tr("Downloading PHP %1…").arg(release.version);
+    QString label;
+    const Result result = loft.install(tool, line, arguments.has("force"), [&](const QString &starting) {
+        label = starting;
         if (!machine)
-            err << label << Qt::endl;
-        if (!Runtimes::installPhp(loft.paths(), release, loft.config().phpBuild, progressPrinter(machine, label),
-                                  &error))
-            return fail(error);
-    } else {
-        const NodeRelease *release = list.nodeRelease(line);
-        if (!release) {
-            QStringList majors;
-            for (const NodeRelease &node : list.node)
-                majors << node.major;
-            return fail(error.isEmpty() ? tr("There's no Node %1 release. Available: %2").arg(line, majors.join(", "))
-                                        : error);
-        }
-        if (loft.installedNode().value(line) == release->version && !arguments.has("force"))
-            return report(Result::done(tr("Node %1 is already the newest").arg(release->version)));
-        const QString label = tr("Downloading Node %1…").arg(release->version);
-        if (!machine)
-            err << label << Qt::endl;
-        if (!Runtimes::installNode(loft.paths(), *release, progressPrinter(machine, label), &error))
-            return fail(error);
-    }
-    std::unique_ptr<QLockFile> lock;
-    if (!lockAndReload(loft, lock))
-        return fail(tr("Another loft command is still running"));
-    return report(loft.installedRuntime(tool, line));
+            err << starting << Qt::endl;
+    }, [&, printer = Runtimes::Progress()](qint64 received, qint64 total) mutable {
+        if (!printer)
+            printer = progressPrinter(machine, label);
+        printer(received, total);
+    });
+    return report(result);
 }
 
 int listRuntimes(const Loft &loft, const QString &tool, const Arguments &arguments) {
@@ -468,6 +424,8 @@ int runCli(const QStringList &all) {
 
     if (command == "dns-server")
         return runDns(loft);
+    if (command == "mcp")
+        return mcp::serve();
 
     static const QStringList mutating{"setup", "uninstall", "refresh", "apply", "link", "unlink", "park",
                                       "forget", "secure", "unsecure", "isolate", "unisolate", "proxy", "unproxy",
@@ -622,27 +580,23 @@ int runCli(const QStringList &all) {
     }
     if (command == "which-php" || command == "which-node") {
         const bool php = command == "which-php";
-        QString error;
-        const auto found = loft.target(siteFlag, &error);
-        QString line = php ? loft.config().php : loft.config().node;
-        if (found && !(php ? found->php : found->node).isEmpty())
-            line = php ? found->php : found->node;
-        const QString binary = php ? loft.paths().phpDir(line) + "/php" : loft.paths().nodeDir(line) + "/bin/node";
-        if (line.isEmpty() || !QFileInfo(binary).isExecutable())
+        QString directory = QDir::currentPath();
+        if (!siteFlag.isEmpty()) {
+            QString error;
+            const auto found = loft.target(siteFlag, &error);
+            if (!found)
+                return fail(error);
+            directory = found->path;
+        }
+        const RuntimeChoice choice = loft.runtimeFor(directory);
+        const QString binary = php ? choice.phpBinary : choice.nodeBinary;
+        if (binary.isEmpty())
             return fail(php ? tr("No PHP installed yet: loft php:install 8.5")
                             : tr("No Node installed yet: loft node:install 24"));
         out << binary << Qt::endl;
         return 0;
     }
 
-    if (command == "set") {
-        const QString value = arguments.at(1);
-        if (first == "check-updates" && (value == "on" || value == "off"))
-            return report(loft.setCheckUpdates(value == "on"));
-        if (first == "php-build")
-            return report(loft.setPhpBuild(value));
-        return fail(tr("Usage: loft set check-updates on|off, or loft set php-build bulk|common"));
-    }
     if (command == "php:list" || command == "node:list")
         return listRuntimes(loft, command.section(':', 0, 0), arguments);
     if (command == "php:install" || command == "node:install") {

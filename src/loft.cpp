@@ -4,6 +4,7 @@
 #include "system.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -154,6 +155,127 @@ std::optional<Site> Loft::target(const QString &name, QString *error) const {
 
 QMap<QString, QString> Loft::installedPhp() const { return Runtimes::installedPhp(m_paths); }
 QMap<QString, QString> Loft::installedNode() const { return Runtimes::installedNode(m_paths); }
+
+RuntimeChoice Loft::runtimeFor(const QString &directory) const {
+    RuntimeChoice choice;
+    const auto found = siteAt(directory);
+    if (found)
+        choice.site = found->name;
+
+    const auto php = installedPhp();
+    choice.phpFrom = found && !found->php.isEmpty() ? "site" : "default";
+    choice.php = choice.phpFrom == "site" ? found->php : m_config.php;
+    if (php.contains(choice.php)) {
+        choice.phpVersion = php.value(choice.php);
+        choice.phpBinary = m_paths.phpDir(choice.php) + "/php";
+    }
+
+    const auto node = installedNode();
+    choice.nodeFrom = "default";
+    choice.node = m_config.node;
+    if (found && !found->node.isEmpty()) {
+        choice.nodeFrom = "site";
+        choice.node = found->node;
+    } else {
+        // The nearest .nvmrc or .node-version wins when Loft has that major.
+        QDir dir(QDir(directory).absolutePath());
+        bool searching = true;
+        while (searching) {
+            for (const QString &file : {QString(".nvmrc"), QString(".node-version")}) {
+                QFile pin(dir.filePath(file));
+                if (!pin.open(QIODevice::ReadOnly))
+                    continue;
+                QString wanted = QString::fromUtf8(pin.readLine()).trimmed().remove(' ').remove('\t');
+                if (wanted.startsWith('v') || wanted.startsWith('V'))
+                    wanted = wanted.mid(1);
+                wanted = wanted.section('.', 0, 0);
+                if (node.contains(wanted)) {
+                    choice.node = wanted;
+                    choice.nodeFrom = file;
+                }
+                searching = false;
+                break;
+            }
+            if (searching && !dir.cdUp())
+                searching = false;
+        }
+    }
+    if (node.contains(choice.node)) {
+        choice.nodeVersion = node.value(choice.node);
+        choice.nodeBinary = m_paths.nodeDir(choice.node) + "/bin/node";
+    }
+    return choice;
+}
+
+std::unique_ptr<QLockFile> Loft::lock(int timeoutMs) {
+    QDir().mkpath(m_paths.state);
+    auto file = std::make_unique<QLockFile>(m_paths.state + "/lock");
+    // Never stale by age; QLockFile still takes over from a process that died.
+    file->setStaleLockTime(0);
+    if (!file->tryLock(timeoutMs))
+        return nullptr;
+    reload();
+    return file;
+}
+
+Catalog Loft::catalog(bool refresh, QString *error) const {
+    Catalog cached = Runtimes::cachedCatalog(m_paths);
+    if (!refresh && cached.fetched.isValid() && cached.fetched.secsTo(QDateTime::currentDateTimeUtc()) < 6 * 3600)
+        return cached;
+    Catalog fresh = Runtimes::fetchCatalog(m_config.phpBuild, error);
+    if (fresh.php.isEmpty())
+        return cached;
+    Runtimes::saveCatalog(m_paths, fresh);
+    return fresh;
+}
+
+Result Loft::install(const QString &tool, const QString &requested, bool force,
+                     const std::function<void(const QString &label)> &starting,
+                     const Runtimes::Progress &progress) {
+    QString line = requested;
+    if (line.startsWith(tool + "@"))
+        line = line.mid(tool.length() + 1);
+    if (line.startsWith('v'))
+        line = line.mid(1);
+    line = tool == "php" ? line.section('.', 0, 1) : line.section('.', 0, 0);
+    QString error;
+    const Catalog list = catalog(true, &error);
+    if (tool == "php") {
+        if (!list.php.contains(line))
+            return Result::fail(error.isEmpty() ? tr("There's no PHP %1 build. Available: %2")
+                                                      .arg(line, QStringList(list.php.keys()).join(", "))
+                                                : error);
+        const PhpRelease release = list.php.value(line);
+        if (installedPhp().value(line) == release.version && !force)
+            return Result::done(tr("PHP %1 is already the newest").arg(release.version));
+        if (starting)
+            starting(tr("Downloading PHP %1…").arg(release.version));
+        if (!Runtimes::installPhp(m_paths, release, m_config.phpBuild, progress, &error))
+            return Result::fail(error);
+    } else if (tool == "node") {
+        const NodeRelease *release = list.nodeRelease(line);
+        if (!release) {
+            QStringList majors;
+            for (const NodeRelease &node : list.node)
+                majors << node.major;
+            return Result::fail(error.isEmpty()
+                                    ? tr("There's no Node %1 release. Available: %2").arg(line, majors.join(", "))
+                                    : error);
+        }
+        if (installedNode().value(line) == release->version && !force)
+            return Result::done(tr("Node %1 is already the newest").arg(release->version));
+        if (starting)
+            starting(tr("Downloading Node %1…").arg(release->version));
+        if (!Runtimes::installNode(m_paths, *release, progress, &error))
+            return Result::fail(error);
+    } else {
+        return Result::fail(tr("The tool is either php or node"));
+    }
+    const auto held = lock();
+    if (!held)
+        return Result::fail(tr("Another loft command is still running"));
+    return installedRuntime(tool, line);
+}
 
 Result Loft::commit(const QString &message) {
     QString error;

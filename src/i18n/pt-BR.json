@@ -330,5 +330,7 @@
   "Loft in the Omarchy bar": "Loft na barra do Omarchy",
   "Removed Loft from the Omarchy bar": "Loft removido da barra do Omarchy",
   "The bar widget isn't installed with Loft": "O widget da barra não veio instalado com o Loft",
-  "Your nginx config for %1 has an error, so Loft serves its own until you fix %2: %3": "Sua config do nginx para %1 tem um erro, então o Loft serve a dele até você corrigir %2: %3"
+  "Your nginx config for %1 has an error, so Loft serves its own until you fix %2: %3": "Sua config do nginx para %1 tem um erro, então o Loft serve a dele até você corrigir %2: %3",
+  "Run the MCP server on stdio, for AI agents": "Rodar o servidor MCP no stdio, para agentes de IA",
+  "The tool is either php or node": "A ferramenta é php ou node"
 }

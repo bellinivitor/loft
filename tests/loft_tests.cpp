@@ -2,6 +2,7 @@
 #include "core.h"
 #include "dnsserver.h"
 #include "loft.h"
+#include "mcp.h"
 #include "runtimes.h"
 #include "system.h"
 
@@ -563,6 +564,77 @@ private slots:
         QVERIFY(loft.nginxEdit("shop", &file).ok);
         QVERIFY(loft.unlink("shop").ok);
         QVERIFY(!QFileInfo::exists(file));
+    }
+
+    void mcpProtocol() {
+        QTemporaryDir dir;
+        const Paths paths = Paths::forHome(dir.path());
+        Loft loft(paths, false);
+        auto call = [&](const QString &tool, const QJsonObject &arguments) {
+            const QJsonObject message{{"jsonrpc", "2.0"}, {"id", 7}, {"method", "tools/call"},
+                                      {"params", QJsonObject{{"name", tool}, {"arguments", arguments}}}};
+            return mcp::handle(loft, message).toObject().value("result").toObject();
+        };
+
+        const QJsonObject init = mcp::handle(loft, {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"},
+                                                    {"params", QJsonObject{{"protocolVersion", "2025-06-18"}}}})
+                                     .toObject().value("result").toObject();
+        QCOMPARE(init.value("protocolVersion").toString(), QString("2025-06-18"));
+        QCOMPARE(init.value("serverInfo").toObject().value("name").toString(), QString("loft"));
+        QVERIFY(mcp::handle(loft, {{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}}).isUndefined()
+                || mcp::handle(loft, {{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}}).isNull());
+
+        // Every tool has a schema, and its name once.
+        QStringList names;
+        for (const auto &value : mcp::tools()) {
+            const QJsonObject tool = value.toObject();
+            QVERIFY(!names.contains(tool.value("name").toString()));
+            names << tool.value("name").toString();
+            QCOMPARE(tool.value("inputSchema").toObject().value("type").toString(), QString("object"));
+        }
+        QVERIFY(names.size() >= 25);
+        QCOMPARE(mcp::handle(loft, {{"jsonrpc", "2.0"}, {"id", 2}, {"method", "tools/call"},
+                                    {"params", QJsonObject{{"name", "nope"}}}})
+                     .toObject().value("error").toObject().value("code").toInt(), -32602);
+
+        write(dir.path() + "/Work/api/artisan", "");
+        write(dir.path() + "/Work/api/public/index.php", "");
+        QDir().mkpath(dir.path() + "/Work/api/app");
+        fakePhp(paths, "8.4", "8.4.27");
+        QVERIFY(loft.useDefault("php", "8.4").ok);
+
+        QJsonObject answer = call("link_site", {{"directory", dir.path() + "/Work/api"}});
+        QVERIFY2(!answer.value("isError").toBool(), qPrintable(QJsonDocument(answer).toJson()));
+        QJsonObject site = answer.value("structuredContent").toObject().value("site").toObject();
+        QCOMPARE(site.value("url").toString(), QString("http://api.test"));
+        QCOMPARE(site.value("kind").toString(), QString("laravel"));
+
+        answer = call("which_runtime", {{"directory", dir.path() + "/Work/api/app"}});
+        QCOMPARE(answer.value("structuredContent").toObject().value("site").toString(), QString("api"));
+        QCOMPARE(answer.value("structuredContent").toObject().value("php").toString(), QString("8.4.27"));
+
+        QVERIFY(call("isolate_site", {{"name", "api"}, {"tool", "php"}, {"version", "8.1"}}).value("isError").toBool());
+        QVERIFY(call("secure_site", {{"name", "api"}}).value("isError").toBool()); // says which way
+
+        answer = call("list_sites", {});
+        QCOMPARE(answer.value("structuredContent").toObject().value("sites").toArray().size(), 1);
+
+        // A config nginx rejects is rolled back.
+        if (!System::which("nginx").isEmpty()) {
+            answer = call("set_nginx_config", {{"name", "api"}, {"config", "not nginx at all"}});
+            QVERIFY(answer.value("isError").toBool());
+            QVERIFY(!QFileInfo::exists(paths.nginxOverride("api.test")));
+            const QString good = "server { listen 127.0.0.1:80; server_name api.test; return 204; }\n";
+            answer = call("set_nginx_config", {{"name", "api"}, {"config", good}});
+            QVERIFY2(!answer.value("isError").toBool(), qPrintable(QJsonDocument(answer).toJson()));
+            answer = call("get_nginx_config", {{"name", "api"}});
+            QVERIFY(answer.value("structuredContent").toObject().value("custom").toBool());
+            QCOMPARE(answer.value("structuredContent").toObject().value("config").toString(), good);
+            QVERIFY(!call("reset_nginx_config", {{"name", "api"}}).value("isError").toBool());
+        }
+
+        QVERIFY(!call("unlink_site", {{"name", "api"}}).value("isError").toBool());
+        QVERIFY(call("unlink_site", {{"name", "api"}}).value("isError").toBool());
     }
 
     void units() {
