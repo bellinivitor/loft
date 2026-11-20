@@ -1,0 +1,16 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="Main.qml">Main.qml</file>
+        <file alias="LoftButton.qml">LoftButton.qml</file>
+        <file alias="NavItem.qml">NavItem.qml</file>
+        <file alias="SiteRow.qml">SiteRow.qml</file>
+        <file alias="SitesPage.qml">SitesPage.qml</file>
+        <file alias="RuntimePage.qml">RuntimePage.qml</file>
+        <file alias="SettingsPage.qml">SettingsPage.qml</file>
+        <file alias="LinkDialog.qml">LinkDialog.qml</file>
+        <file alias="ConfirmDialog.qml">ConfirmDialog.qml</file>
+        <file alias="HelpOverlay.qml">HelpOverlay.qml</file>
+        <file alias="i18n/en.json">i18n/en.json</file>
+        <file alias="i18n/pt-BR.json">i18n/pt-BR.json</file>
+    </qresource>
+</RCC>

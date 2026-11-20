@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Loft</title>
+  <desc>A roof over a lit round attic window on a dark tile: the room at the top of the house where your sites live.</desc>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#24283b"/>
+      <stop offset="1" stop-color="#13141c"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ffd60a"/>
+      <stop offset="1" stop-color="#ff9e3d"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App tile, with a hairline edge so it holds up on dark backgrounds. -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#tile)"/>
+  <rect x="17" y="17" width="478" height="478" rx="111" fill="none" stroke="#414868" stroke-opacity=".7" stroke-width="2"/>
+
+  <!-- The roof. -->
+  <path d="M104 262 L256 132 L408 262" fill="none" stroke="url(#ink)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- The walls under it, quieter. -->
+  <path d="M152 270 V376 H360 V270" fill="none" stroke="#c0caf5" stroke-opacity=".35" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- The lit attic window. -->
+  <circle cx="256" cy="282" r="46" fill="url(#ink)"/>
+  <path d="M256 240 V324 M214 282 H298" stroke="#1a1c26" stroke-width="9"/>
+</svg>

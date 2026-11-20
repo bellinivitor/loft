@@ -1,0 +1,18 @@
+{
+  "%n update(s)": {
+    "one": "%n update",
+    "other": "%n updates"
+  },
+  "Used by %n site(s)": {
+    "one": "Used by %n site",
+    "other": "Used by %n sites"
+  },
+  "%n site(s)": {
+    "one": "%n site",
+    "other": "%n sites"
+  },
+  "In %n certificate database(s)": {
+    "one": "In %n certificate database",
+    "other": "In %n certificate databases"
+  }
+}

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Loft
+Comment=Local PHP and Node sites with HTTPS, served by nginx
+Comment[pt_BR]=Sites locais de PHP e Node com HTTPS, servidos pelo nginx
+Exec=loft
+Icon=loft
+Terminal=false
+Categories=Development;WebDevelopment;
+Keywords=php;node;nginx;laravel;herd;valet;https;composer;
+StartupWMClass=loft
